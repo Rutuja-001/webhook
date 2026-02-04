@@ -5,7 +5,28 @@ const app = express();
 // IMPORTANT: webhook usually needs raw JSON
 app.use(express.json());
 
-// 1. Basic Webhook Example
+// 1. Basic Webhook Verification (GET)
+// Often used by platforms like Meta/WhatsApp to verify your server
+app.get("/webhook", (req, res) => {
+    const mode = req.query["hub.mode"];
+    const token = req.query["hub.verify_token"];
+    const challenge = req.query["hub.challenge"];
+
+    const VERIFY_TOKEN = process.env.VERIFY_TOKEN || "my_verify_token";
+
+    if (mode && token) {
+        if (mode === "subscribe" && token === VERIFY_TOKEN) {
+            console.log("WEBHOOK_VERIFIED");
+            res.status(200).send(challenge);
+        } else {
+            res.sendStatus(403);
+        }
+    } else {
+        res.status(200).send("Webhook Server is up and running!");
+    }
+});
+
+// 2. Basic Webhook Received (POST)
 app.post("/webhook", (req, res) => {
     const headers = req.headers;
     const body = req.body;
