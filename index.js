@@ -2,11 +2,13 @@ require("dotenv").config();
 const express = require("express");
 const fs = require("fs");
 const XLSX = require("xlsx");
+const path = require("path");
 
 const app = express();
 app.use(express.json());
 
-const FILE_PATH = "bookings.xlsx";
+// ✅ Save Excel in project root
+const FILE_PATH = path.join(__dirname, "bookings.xlsx");
 
 /* ======================================
    1️⃣ WEBHOOK VERIFICATION (GET)
@@ -23,7 +25,7 @@ app.get("/webhook", (req, res) => {
     return res.status(200).send(challenge);
   }
 
-  res.sendStatus(403);
+  return res.sendStatus(403);
 });
 
 /* ======================================
@@ -40,8 +42,8 @@ function saveToExcel(phone, services, timeSlot) {
 
   data.push({
     Phone: phone,
-    Services: Array.isArray(services) ? services.join(", ") : services,
-    TimeSlot: timeSlot,
+    Services: Array.isArray(services) ? services.join(", ") : (services || ""),
+    TimeSlot: timeSlot || "",
     Date: new Date().toLocaleString(),
   });
 
@@ -50,23 +52,43 @@ function saveToExcel(phone, services, timeSlot) {
   XLSX.utils.book_append_sheet(newWorkbook, newSheet, "Bookings");
   XLSX.writeFile(newWorkbook, FILE_PATH);
 
-  console.log("📊 Booking saved to Excel");
+  console.log("📊 Booking saved to Excel:", FILE_PATH);
 }
 
 /* ======================================
-   3️⃣ HANDLE BOOKING
+   3️⃣ EXTRACT FLOW DATA (YOUR KEYS)
+====================================== */
+function extractBookingFromFlow(flowData) {
+  // ✅ These keys match your webhook log
+  const services = [
+    ...(flowData["screen_0_SKIN_0"] || []),
+    ...(flowData["screen_0__HAIR_1"] || []),
+    ...(flowData["screen_0__MAKEUP_2"] || []),
+    ...(flowData["screen_0__NAILS_3"] || []),
+  ];
+
+  const timeSlot =
+    (flowData["screen_1_Choose__preferred_time_slot_0"] || [])[0];
+
+  return { services, timeSlot };
+}
+
+/* ======================================
+   4️⃣ HANDLE BOOKING
 ====================================== */
 function handleBooking(phone, flowData) {
+  const { services, timeSlot } = extractBookingFromFlow(flowData);
+
   console.log("📌 New Booking Received");
   console.log("Phone:", phone);
-  console.log("Services:", flowData?.services);
-  console.log("Time Slot:", flowData?.time_slot);
+  console.log("✅ Selected Services:", services);
+  console.log("⏰ Selected Time:", timeSlot);
 
-  saveToExcel(phone, flowData?.services, flowData?.time_slot);
+  saveToExcel(phone, services, timeSlot);
 }
 
 /* ======================================
-   4️⃣ MAIN WEBHOOK RECEIVER (POST)
+   5️⃣ MAIN WEBHOOK RECEIVER (POST)
 ====================================== */
 app.post("/webhook", (req, res) => {
   try {
@@ -81,35 +103,35 @@ app.post("/webhook", (req, res) => {
       entry.changes?.forEach((change) => {
         const value = change.value;
 
-        /* 🔥 FLOW RESPONSE */
+        // ✅ Incoming messages (Flow response etc.)
         if (value.messages?.length) {
           const message = value.messages[0];
 
           console.log("💬 Message from:", message.from);
-          console.log("📌 Type:", message.type);
+          console.log("📌 Message type:", message.type);
 
+          // ✅ WhatsApp Flow Response
           if (
             message.type === "interactive" &&
             message.interactive?.type === "nfm_reply"
           ) {
             console.log("🚀 FLOW RESPONSE RECEIVED");
 
-            const flowData =
-              message.interactive.nfm_reply?.response_json;
+            // ✅ FIX: response_json is STRING → parse to object
+            const flowData = JSON.parse(
+              message.interactive?.nfm_reply?.response_json || "{}"
+            );
+
+            console.log("📋 Flow Data:", flowData);
 
             handleBooking(message.from, flowData);
           }
         }
 
-        /* 📢 TEMPLATE STATUS UPDATE */
-        if (change.field === "message_template_status_update") {
-          console.log("📊 Template Status Update:", value);
-        }
-
-        /* 📦 MESSAGE DELIVERY STATUS */
+        // ✅ Delivery statuses
         if (value.statuses?.length) {
           value.statuses.forEach((status) => {
-            console.log("📨 Message Status:");
+            console.log("📨 Message Status Update:");
             console.log("To:", status.recipient_id);
             console.log("Status:", status.status);
           });
@@ -125,7 +147,7 @@ app.post("/webhook", (req, res) => {
 });
 
 /* ======================================
-   5️⃣ DOWNLOAD EXCEL ROUTE
+   6️⃣ DOWNLOAD EXCEL ROUTE
 ====================================== */
 app.get("/download-excel", (req, res) => {
   if (!fs.existsSync(FILE_PATH)) {
@@ -143,12 +165,12 @@ app.get("/download-excel", (req, res) => {
 /* ======================================
    🚀 START SERVER
 ====================================== */
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000;
 
 app.listen(PORT, () => {
   console.log("==================================");
   console.log("🚀 Webhook Server Running");
-  console.log(`🌐 http://localhost:${PORT}`);
+  console.log(`🔗 http://localhost:${PORT}/webhook`);
   console.log(`📥 Download: /download-excel`);
   console.log("==================================");
 });
