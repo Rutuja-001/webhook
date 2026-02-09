@@ -1,7 +1,9 @@
 require("dotenv").config();
 const express = require("express");
-const app = express();
+const fs = require("fs");
+const XLSX = require("xlsx");
 
+const app = express();
 app.use(express.json());
 
 /* ================================
@@ -23,61 +25,81 @@ app.get("/webhook", (req, res) => {
 });
 
 /* ================================
+   ✅ SAVE TO EXCEL
+================================ */
+function saveToExcel(phone, services, timeSlot) {
+  const filePath = "bookings.xlsx";
+  let data = [];
+
+  if (fs.existsSync(filePath)) {
+    const workbook = XLSX.readFile(filePath);
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    data = XLSX.utils.sheet_to_json(sheet);
+  }
+
+  data.push({
+    Phone: phone,
+    Services: Array.isArray(services) ? services.join(", ") : services,
+    TimeSlot: timeSlot,
+    Date: new Date().toLocaleString(),
+  });
+
+  const newWorkbook = XLSX.utils.book_new();
+  const newSheet = XLSX.utils.json_to_sheet(data);
+  XLSX.utils.book_append_sheet(newWorkbook, newSheet, "Bookings");
+  XLSX.writeFile(newWorkbook, filePath);
+}
+
+/* ================================
+   ✅ HANDLE BOOKING
+================================ */
+function handleBooking(phone, flowData) {
+  console.log("📌 New Booking");
+  console.log("Phone:", phone);
+  console.log("Services:", flowData?.services);
+  console.log("Time Slot:", flowData?.time_slot);
+
+  saveToExcel(phone, flowData?.services, flowData?.time_slot);
+  console.log("📊 Saved to bookings.xlsx ✅");
+}
+
+/* ================================
    2️⃣ MAIN WEBHOOK RECEIVER (POST)
 ================================ */
 app.post("/webhook", (req, res) => {
-  const body = req.body;
+  try {
+    const body = req.body;
 
-  console.log("📩 Incoming Webhook:");
-  console.log(JSON.stringify(body, null, 2));
+    console.log("📩 Incoming Webhook:");
+    console.log(JSON.stringify(body, null, 2));
 
-  if (body.object) {
+    if (!body.object) return res.sendStatus(404);
+
     body.entry?.forEach((entry) => {
       entry.changes?.forEach((change) => {
-
         const value = change.value;
 
         /* ===========================
-           📨 NORMAL MESSAGES
+           📨 NORMAL MESSAGES + FLOW
         =========================== */
-        if (value.messages) {
+        if (value.messages?.length) {
           const message = value.messages[0];
-          const from = message.from;
 
-          console.log("💬 Message from:", from);
+          console.log("💬 Message from:", message.from);
           console.log("📌 Message type:", message.type);
 
-          /* ===========================
-             🔥 FLOW RESPONSE
-          =========================== */
-          if (message.type === "interactive") {
-            const interactive = message.interactive;
+          // ✅ FLOW RESPONSE
+          if (
+            message.type === "interactive" &&
+            message.interactive?.type === "nfm_reply"
+          ) {
+            console.log("🚀 FLOW RESPONSE RECEIVED");
 
-            // Flow reply
-            if (interactive.type === "nfm_reply") {
-              console.log("🚀 FLOW RESPONSE RECEIVED");
+            const flowData = message.interactive.nfm_reply?.response_json;
 
-              const flowData = interactive.nfm_reply?.response_json;
+            console.log("📋 Flow Data:", flowData);
 
-              console.log("📋 Flow Data:");
-              console.log(flowData);
-
-              /*
-                 Example flowData:
-                 {
-                   services: ["Facial", "Hair Spa"],
-                   time_slot: "4PM - 5PM"
-                 }
-              */
-
-              console.log("✅ Selected Services:", flowData?.services);
-              console.log("⏰ Selected Time:", flowData?.time_slot);
-
-              // 👉 HERE you can:
-              // - Save to database
-              // - Send email
-              // - Call CRM
-            }
+            handleBooking(message.from, flowData);
           }
         }
 
@@ -85,28 +107,27 @@ app.post("/webhook", (req, res) => {
            📢 TEMPLATE STATUS UPDATE
         =========================== */
         if (change.field === "message_template_status_update") {
-          console.log("📊 Template Status Update:");
-          console.log(value);
+          console.log("📊 Template Status Update:", value);
         }
 
         /* ===========================
            📦 MESSAGE DELIVERY STATUS
         =========================== */
-        if (value.statuses) {
+        if (value.statuses?.length) {
           value.statuses.forEach((status) => {
             console.log("📨 Message Status Update:");
             console.log("To:", status.recipient_id);
             console.log("Status:", status.status);
           });
         }
-
       });
     });
 
     return res.status(200).send("EVENT_RECEIVED");
+  } catch (err) {
+    console.error("❌ Webhook error:", err);
+    return res.sendStatus(500);
   }
-
-  res.sendStatus(404);
 });
 
 /* ================================
