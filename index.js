@@ -1,63 +1,122 @@
-require('dotenv').config();
+require("dotenv").config();
 const express = require("express");
 const app = express();
 
-// IMPORTANT: webhook usually needs raw JSON
 app.use(express.json());
 
-// 1. Basic Webhook Verification (GET)
-// Often used by platforms like Meta/WhatsApp to verify your server
+/* ================================
+   1️⃣ WEBHOOK VERIFICATION (GET)
+================================ */
 app.get("/webhook", (req, res) => {
-    const mode = req.query["hub.mode"];
-    const token = req.query["hub.verify_token"];
-    const challenge = req.query["hub.challenge"];
+  const mode = req.query["hub.mode"];
+  const token = req.query["hub.verify_token"];
+  const challenge = req.query["hub.challenge"];
 
-    const VERIFY_TOKEN = process.env.VERIFY_TOKEN || "my_verify_token";
+  const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
 
-    if (mode && token) {
-        if (mode === "subscribe" && token === VERIFY_TOKEN) {
-            console.log("WEBHOOK_VERIFIED");
-            res.status(200).send(challenge);
-        } else {
-            res.sendStatus(403);
-        }
-    } else {
-        res.status(200).send("Webhook Server is up and running!");
-    }
+  if (mode === "subscribe" && token === VERIFY_TOKEN) {
+    console.log("✅ WEBHOOK VERIFIED");
+    return res.status(200).send(challenge);
+  }
+
+  res.sendStatus(403);
 });
 
-// 2. Basic Webhook Received (POST)
+/* ================================
+   2️⃣ MAIN WEBHOOK RECEIVER (POST)
+================================ */
 app.post("/webhook", (req, res) => {
-    const headers = req.headers;
-    const body = req.body;
+  const body = req.body;
 
-    console.log("--- Basic Webhook Received ---");
-    console.log("Webhook Headers:", headers);
-    console.log("Webhook Body:", body);
+  console.log("📩 Incoming Webhook:");
+  console.log(JSON.stringify(body, null, 2));
 
-    // Always respond quickly
-    res.status(200).send("Webhook received");
+  if (body.object) {
+    body.entry?.forEach((entry) => {
+      entry.changes?.forEach((change) => {
+
+        const value = change.value;
+
+        /* ===========================
+           📨 NORMAL MESSAGES
+        =========================== */
+        if (value.messages) {
+          const message = value.messages[0];
+          const from = message.from;
+
+          console.log("💬 Message from:", from);
+          console.log("📌 Message type:", message.type);
+
+          /* ===========================
+             🔥 FLOW RESPONSE
+          =========================== */
+          if (message.type === "interactive") {
+            const interactive = message.interactive;
+
+            // Flow reply
+            if (interactive.type === "nfm_reply") {
+              console.log("🚀 FLOW RESPONSE RECEIVED");
+
+              const flowData = interactive.nfm_reply?.response_json;
+
+              console.log("📋 Flow Data:");
+              console.log(flowData);
+
+              /*
+                 Example flowData:
+                 {
+                   services: ["Facial", "Hair Spa"],
+                   time_slot: "4PM - 5PM"
+                 }
+              */
+
+              console.log("✅ Selected Services:", flowData?.services);
+              console.log("⏰ Selected Time:", flowData?.time_slot);
+
+              // 👉 HERE you can:
+              // - Save to database
+              // - Send email
+              // - Call CRM
+            }
+          }
+        }
+
+        /* ===========================
+           📢 TEMPLATE STATUS UPDATE
+        =========================== */
+        if (change.field === "message_template_status_update") {
+          console.log("📊 Template Status Update:");
+          console.log(value);
+        }
+
+        /* ===========================
+           📦 MESSAGE DELIVERY STATUS
+        =========================== */
+        if (value.statuses) {
+          value.statuses.forEach((status) => {
+            console.log("📨 Message Status Update:");
+            console.log("To:", status.recipient_id);
+            console.log("Status:", status.status);
+          });
+        }
+
+      });
+    });
+
+    return res.status(200).send("EVENT_RECEIVED");
+  }
+
+  res.sendStatus(404);
 });
 
-// 2. Secure Webhook Example
-app.post("/webhook-secure", (req, res) => {
-    const signature = req.headers["x-webhook-signature"];
-    const SECRET = process.env.WEBHOOK_SECRET || "fallback_secret";
-
-    console.log("--- Secure Webhook Attempt ---");
-
-    if (signature !== SECRET) {
-        console.log("Invalid signature received");
-        return res.status(401).send("Invalid signature");
-    }
-
-    console.log("Verified webhook:", req.body);
-    res.status(200).send("Verified Webhook received");
-});
-
+/* ================================
+   🚀 START SERVER
+================================ */
 const PORT = process.env.PORT || 3000;
+
 app.listen(PORT, () => {
-    console.log(`Webhook server running on http://localhost:${PORT}`);
-    console.log(`Basic Webhook URI: http://localhost:${PORT}/webhook`);
-    console.log(`Secure Webhook URI: http://localhost:${PORT}/webhook-secure`);
+  console.log("==================================");
+  console.log("🚀 Webhook Server Running");
+  console.log(`🔗 http://localhost:${PORT}/webhook`);
+  console.log("==================================");
 });
